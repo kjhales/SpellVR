@@ -10,6 +10,8 @@ class MAGIC_API AMagicCoopCharacter : public ACharacter
 {
 	GENERATED_BODY()
 
+	virtual void PostInitializeComponents() override;
+
 	/** Pawn mesh: 1st person view (arms; seen only by self) */
 	UPROPERTY(VisibleDefaultsOnly, Category = Mesh)
 	class USkeletalMeshComponent* Mesh1P;

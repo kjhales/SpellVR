@@ -11,29 +11,44 @@ ASpellBase::ASpellBase(const FObjectInitializer& ObjectInitializer)
 	PrimaryActorTick.bCanEverTick = true;
 
 	//Use a sphere as simple collision
-	CollisionComp = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionSphere"));
+	CollisionComp = ObjectInitializer.CreateDefaultSubobject<USphereComponent>(this, TEXT("CollisionSphere"));
 	CollisionComp->InitSphereRadius(32.f);
+	CollisionComp->AlwaysLoadOnClient = true;
+	CollisionComp->AlwaysLoadOnServer = true;
+	CollisionComp->bTraceComplexOnMove = true;
 
 	//Players Can't walk on it
 	CollisionComp->SetWalkableSlopeOverride(FWalkableSlopeOverride(WalkableSlope_Unwalkable, 0.f));
 	CollisionComp->CanCharacterStepUpOn = ECB_No;
 	CollisionComp->BodyInstance.SetCollisionProfileName("Projectile");
-
-	OffSet = FVector(80.0f, 0.0f, -30.0f);
-
-	//Set the colliison as the root component
 	RootComponent = CollisionComp;
 
-	SpellMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("SpellMovement"));
-	SpellMovement->Velocity = FVector(1.f, 0.f, 0.f);
+	SpellMovement = ObjectInitializer.CreateDefaultSubobject<UProjectileMovementComponent>(this, TEXT("SpellMovement"));
+	SpellMovement->UpdatedComponent = CollisionComp;
+	SpellMovement->bRotationFollowsVelocity = true;
+	SpellMovement->ProjectileGravityScale = 0.0f;
 
-	SpellEffect = CreateDefaultSubobject<UParticleSystemComponent>(TEXT("SpellEffect"));
-	SpellEffect->AttachParent = CollisionComp;
+	SpellEffect = ObjectInitializer.CreateDefaultSubobject<UParticleSystemComponent>(this, TEXT("SpellEffect"));
+	SpellEffect->bAutoDestroy = false;
+	SpellEffect->AttachParent = RootComponent;
 
-	SpellMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProjectileMesh"));
+	SpellMesh = ObjectInitializer.CreateDefaultSubobject<UStaticMeshComponent>(this, TEXT("ProjectileMesh"));
 	SpellMesh->AttachParent = CollisionComp;
 	
+	/** Spell has no collision at beginning so it can cast**/
 	SetActorEnableCollision(false);
+
+	bReplicates = true;
+	bReplicateMovement = true;
+}
+
+void ASpellBase::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+
+	CollisionComp->OnComponentHit.AddDynamic(this, &ASpellBase::OnHit);
+	CollisionComp->MoveIgnoreActors.Add(Instigator);
+	PlayerController = GetInstigatorController();
 }
 
 // Called every frame
@@ -45,14 +60,14 @@ void ASpellBase::Tick(float DeltaTime)
 	if (bReady)
 	{
 		//If Scaling and It has been alive less than the casttime
-		if (bScaleWhileCasting && (Alive < CastTime))
+		if (bScaleWhileCasting && (Alive < Spell.CastTime))
 		{
 			//Scale up the actor
-			FVector ScaleVector(Alive / CastTime);
+			FVector ScaleVector(Alive / Spell.CastTime);
 			SetActorRelativeScale3D(ScaleVector);
 		}
 		// If Release is true and It has been alive longer than the cast time then release the spell
-		if (bRelease && (Alive >= CastTime))
+		if (bRelease && (Alive >= Spell.CastTime))
 		{
 			ReleaseSpell();
 		}
@@ -61,20 +76,19 @@ void ASpellBase::Tick(float DeltaTime)
 		{
 			//Increment alive by time
 			Alive += DeltaTime;
-			if (Alive - CastTime >= GetLifeSpan())
+			if (Alive - CastTime >= Spell.LifeSpan)
 			{
 				SpellEffect->ToggleActive();
-				Destroy();
+				DisableAndDestroy();
 			}
 		}
 	}
 }
 
-void ASpellBase::Cast(struct FSpellStruct InSpell)
+void ASpellBase::CastSpell(const FSpellStruct& InSpell)
 {
 	Spell = InSpell;
-	CastTime = InSpell.CastTime;
-	SetLifeSpan(InSpell.LifeSpan);
+	SpellMovement->InitialSpeed = ProjectileSpeed;
 	bReady = true;
 }
 
@@ -87,7 +101,7 @@ void ASpellBase::ReleaseSpell()
 	}
 
 	//Detach the spell
-	DetachRootComponentFromParent();
+	DetachRootComponentFromParent(true);
 
 	//If live rotation is on change the rotation of spell with actor
 	if (bUseLiveRotation)
@@ -97,22 +111,22 @@ void ASpellBase::ReleaseSpell()
 	}
 
 	//If there is a target then adjust for target
-	if (Target != NULL)
+	if (Target)
 	{
 		FVector Direction = Target->GetActorLocation() - GetActorLocation();
-		//SpellMovement->SetVelocityInLocalSpace(Direction * ProjectileSpeed);
-		SpellMovement->Velocity = Direction * ProjectileSpeed;
+		InitVelocity(Direction);
 	}
 	else
 	{
-		//SpellMovement->SetVelocityInLocalSpace(GetActorForwardVector() * ProjectileSpeed);
-		SpellMovement->Velocity = GetActorForwardVector() * ProjectileSpeed;
+		//FVector Velocity = GetActorForwardVector() * ProjectileSpeed;
+		FVector Direction = GetActorForwardVector();
+		InitVelocity(Direction);
 	}
 
 	SetActorEnableCollision(true);
 }
 
-void ASpellBase::SetTarget(AActor* const InTarget)
+void ASpellBase::SetTarget(AActor* InTarget)
 {
 	if (InTarget != NULL)
 	{
@@ -120,15 +134,27 @@ void ASpellBase::SetTarget(AActor* const InTarget)
 	}
 }
 
-void ASpellBase::OnHit_Implementation(AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+void ASpellBase::OnHit(AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
 {
-
-	UE_LOG(LogTemp, Log, TEXT("Spell Base Hit!"));
 	// Only add impulse and destroy projectile if we hit a physics
 	if ((OtherActor != NULL) && (OtherActor != this) && (OtherComp != NULL) && OtherComp->IsSimulatingPhysics())
 	{
 		OtherComp->AddImpulseAtLocation(GetVelocity() * 100.0f, GetActorLocation());
+		UGameplayStatics::ApplyDamage(OtherActor, Spell.Power, PlayerController.Get(), this, NULL);
+		DisableAndDestroy();
+	}
+}
 
-		Destroy();
+void ASpellBase::DisableAndDestroy()
+{
+	SpellMovement->StopMovementImmediately();
+	SetLifeSpan(2.0f);
+}
+
+void ASpellBase::InitVelocity(FVector& ShootDirection)
+{
+	if (SpellMovement)
+	{
+		SpellMovement->Velocity = ShootDirection * SpellMovement->InitialSpeed;
 	}
 }

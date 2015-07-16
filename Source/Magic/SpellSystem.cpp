@@ -2,6 +2,7 @@
 
 #include "Magic.h"
 #include "SpellSystem.h"
+#include "MagicPlayerController.h"
 #include "SingletonFunctionLib.h"
 
 // Sets default values
@@ -49,12 +50,23 @@ void ASpellSystem::Tick(float DeltaTime)
 
 }
 
+/** Sets the owner of this spell system**/
+void ASpellSystem::SetOwningPawn(AActor* NewOwner)
+{
+	if (Caster != NewOwner)
+	{
+		Instigator = Cast<APawn>(NewOwner);
+		Caster = NewOwner;
+		SetOwner(NewOwner);
+	}
+}
+
 void ASpellSystem::AddSpell(int32 SpellID)
 {
 	bool Valid;
 
 	//Get the Spell that was cast from the Database
-	FSpellStruct Spell = USingletonFunctionLib::GetDatabase(Valid)->Spells[SpellID];
+	struct FSpellStruct Spell = USingletonFunctionLib::GetDatabase(Valid)->Spells[SpellID];
 
 	//Add Current Spell to available spells list and add a cooldown slot
 	AvailableSpells.Emplace(Spell);
@@ -80,77 +92,76 @@ void ASpellSystem::CancelSpellCast()
 void ASpellSystem::SelectNext()
 {
 	if (CurrentSpell + 1 > AvailableSpells.Num())
+	{
 		CurrentSpell = 0;
+	}
 	else
+	{
 		++CurrentSpell;
+	}
 }
 
 void ASpellSystem::SelectPrevious()
 {
 	if (CurrentSpell - 1 < 0)
+	{
 		CurrentSpell = AvailableSpells.Num();
-	else 
+	}
+	else
+	{
 		--CurrentSpell;
+	}
 }
 
 void ASpellSystem::ReleaseSpell()
 {
-	if (CurrentSpellObject != NULL)
+	if (CurrentSpellObject)
 	{
 		CurrentSpellObject->bRelease = true;
 		bRelease = true;
 	}
 }
 
-void ASpellSystem::InitSpellCast(FVector CastPositionOffset, FVector& Location, FSpellStruct& SpellStruct)
-{
-	//Reset Release state and Set Casting state
-	bRelease = false;
-	bCasting = true;
-
-	//Get the Struct of the current spell from the database.
-	SpellStruct = GetCurrentSpell();
-
-	//Set a new cooldown for the cast spell
-	Cooldowns[CurrentSpell] = SpellStruct.Cooldown;
-	CastTime = SpellStruct.CastTime;
-
-	//Get The location of the spell by adding the cast position offset and spell offset
-	Location = (CastPositionOffset + SpellStruct.CastOffset);
-	//Rotate the spell forward
-	Location = Rotator.RotateVector(Location);
-	//Add to the actor location
-	Location += Caster->GetActorLocation();
-}
-
-void ASpellSystem::Cast(AActor* InCaster, USkeletalMeshComponent* CasterMesh, FRotator CastRotation,
+void ASpellSystem::CastSpell(USkeletalMeshComponent* CasterMesh, FRotator CastRotation,
 	FVector CastPositionOffset, AActor* InTarget, bool bUseLiveRotation)
 {
 	bSuccess = false;
-	Caster = InCaster;
 	Rotator = CastRotation;
 
 	//If in Casting State or The Current Cooldown is still active then no cast.
 	if (!bCasting && !IsCurrentSpellOnCooldown())
 	{
+		//Reset Release state and Set Casting state
+		bRelease = false;
+		bCasting = true;
 
-		UE_LOG(LogTemp, Warning, TEXT("Cast confirmed."));
+		//Get the Struct of the current spell from the database.
+		struct FSpellStruct TempCurrentSpell = GetCurrentSpell();
 
-		FVector Location;
-		FSpellStruct TempCurrentSpell;
-		InitSpellCast(CastPositionOffset, Location, TempCurrentSpell);
+		//Set a new cooldown for the cast spell
+		Cooldowns[CurrentSpell] = TempCurrentSpell.Cooldown;
+		CastTime = TempCurrentSpell.CastTime;
 
-		//Set Spawn Parameters
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.Owner = InCaster;
-		SpawnParams.Name = TempCurrentSpell.Name;
+		//Get The location of the spell by adding the cast position offset and spell offset
+		FVector Location = (CastPositionOffset + TempCurrentSpell.CastOffset);
+		Location = Rotator.RotateVector(Location);
+		Location += Caster->GetActorLocation();
 
-		CurrentSpellObject = GetWorld()->SpawnActor<ASpellBase>(TempCurrentSpell.SpellClass, Location, Rotator, SpawnParams);
-		CurrentSpellObject->bUseLiveRotation = bUseLiveRotation;
-		CurrentSpellObject->SetTarget(InTarget);
-		CurrentSpellObject->Cast(TempCurrentSpell);
+		FTransform SpawnTM(Rotator, Location);
 
-		if (CasterMesh != NULL)
+		CurrentSpellObject = Cast<ASpellBase>(UGameplayStatics::BeginSpawningActorFromClass(this, TempCurrentSpell.SpellClass, SpawnTM, true));
+		if (CurrentSpellObject)
+		{
+			CurrentSpellObject->Instigator = Instigator;
+			CurrentSpellObject->SetOwner(this);
+			CurrentSpellObject->bUseLiveRotation = bUseLiveRotation;
+			CurrentSpellObject->SetTarget(InTarget);
+
+			UGameplayStatics::FinishSpawningActor(CurrentSpellObject, SpawnTM);
+			CurrentSpellObject->CastSpell(TempCurrentSpell);
+		}
+
+		if (CasterMesh)
 		{
 			CurrentSpellObject->AttachRootComponentTo(CasterMesh, NAME_None, EAttachLocation::KeepWorldPosition);
 		}
@@ -168,4 +179,20 @@ bool ASpellSystem::IsCurrentSpellOnCooldown() const
 	}
 
 	return Cooldowns[CurrentSpell] > 0.f;
+}
+
+FVector ASpellSystem::GetAdjustedAim() const
+{
+	AMagicPlayerController* const PlayerController = Instigator ? Cast<AMagicPlayerController>(Instigator->Controller) : NULL;
+	FVector FinalAim = FVector::ZeroVector;
+
+	if (PlayerController)
+	{
+		FVector CamLoc;
+		FRotator CamRot;
+		PlayerController->GetPlayerViewPoint(CamLoc, CamRot);
+		FinalAim = CamRot.Vector();
+	}
+
+	return FinalAim;
 }

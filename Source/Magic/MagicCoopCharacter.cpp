@@ -22,29 +22,46 @@ AMagicCoopCharacter::AMagicCoopCharacter(const FObjectInitializer& ObjectInitial
 	BaseLookUpRate = 45.f;
 
 	// Create a CameraComponent	
-	FirstPersonCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
+	FirstPersonCameraComponent = ObjectInitializer.CreateDefaultSubobject<UCameraComponent>(this, TEXT("FirstPersonCamera"));
 	FirstPersonCameraComponent->AttachParent = GetCapsuleComponent();
 	FirstPersonCameraComponent->RelativeLocation = FVector(0, 0, 64.f); // Position the camera
 	FirstPersonCameraComponent->bUsePawnControlRotation = true;
 
 	// Default offset from the character location for projectiles to spawn
-	GunOffset = FVector(100.0f, 30.0f, 10.0f);
+	GunOffset = FVector(100.0f, 30.0f, 40.0f);
 
 	// Create a mesh component that will be used when being viewed from a '1st person' view (when controlling this pawn)
-	Mesh1P = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("CharacterMesh1P"));
-	Mesh1P->SetOnlyOwnerSee(true);			// only the owning player will see this mesh
+	Mesh1P = ObjectInitializer.CreateDefaultSubobject<USkeletalMeshComponent>(this, TEXT("CharacterMesh1P"));
 	Mesh1P->AttachParent = FirstPersonCameraComponent;
-	Mesh1P->RelativeLocation = FVector(0.f, 0.f, -150.f);
+	Mesh1P->bOnlyOwnerSee = true;		// only the owning player will see this mesh
+	Mesh1P->bOwnerNoSee = false;
+	Mesh1P->bReceivesDecals = false;
 	Mesh1P->bCastDynamicShadow = false;
 	Mesh1P->CastShadow = false;
 
-	GetMesh()->SetOwnerNoSee(true);
+	/** Set Player unable to see their 3rd person body**/
+	GetMesh()->bOnlyOwnerSee = false;
+	GetMesh()->bOwnerNoSee = true;
+	GetMesh()->bReceivesDecals = false;
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 
-	SpellSystemChildComponent = CreateDefaultSubobject<UChildActorComponent>(TEXT("SpellSystemComponent"));
+	SpellSystemChildComponent = ObjectInitializer.CreateDefaultSubobject<UChildActorComponent>(this, TEXT("SpellSystemComponent"));
 	SpellSystemChildComponent->SetChildActorClass(ASpellSystem::StaticClass());
 	SpellSystemChildComponent->AttachParent = RootComponent;
 }
 
+void AMagicCoopCharacter::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+
+	if (SpellSystem == NULL)
+	{
+		SpellSystemChildComponent->CreateChildActor();
+		SpellSystem = Cast<ASpellSystem>(SpellSystemChildComponent->ChildActor);
+		SpellSystem->SetOwningPawn(this);
+		SpellSystem->AddSpell(0);
+	}
+}
 //////////////////////////////////////////////////////////////////////////
 // Input
 void AMagicCoopCharacter::SetupPlayerInputComponent(class UInputComponent* InputComponent)
@@ -73,14 +90,6 @@ void AMagicCoopCharacter::SetupPlayerInputComponent(class UInputComponent* Input
 void AMagicCoopCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-
-	if (SpellSystem == NULL)
-	{
-		SpellSystemChildComponent->CreateChildActor();
-		SpellSystem = (ASpellSystem*) SpellSystemChildComponent->ChildActor;
-		//SpellSystem = (ASpellSystem*)GetWorld()->SpawnActor(ASpellSystem::StaticClass());
-		SpellSystem->AddSpell(0);
-	}
 }
 
 void AMagicCoopCharacter::Tick(float DeltaTime)
@@ -95,58 +104,11 @@ void AMagicCoopCharacter::OnRelease()
 
 void AMagicCoopCharacter::OnFire()
 {
-	//AActor* Target = GetTarget();
-
-	if (SpellSystem != NULL)
+	if (SpellSystem)
 	{
-		SpellSystem->Cast(this, Mesh1P, GetActorRotation(), GunOffset, NULL, false);
-	}
-	
-	// try and play a firing animation if specified
-	if (FireAnimation != NULL)
-	{
-		// Get the animation object for the arms mesh
-		UAnimInstance* AnimInstance = Mesh1P->GetAnimInstance();
-		if (AnimInstance != NULL)
-		{
-			AnimInstance->Montage_Play(FireAnimation, 1.f);
-		}
+		SpellSystem->CastSpell(Mesh1P, GetActorRotation(), GunOffset, NULL, false);
 	}
 }
-
-/*AActor* AMagicCoopCharacter::GetTarget()
-{
-	FCollisionQueryParams RV_TraceParams = FCollisionQueryParams(FName(TEXT("RV_Trace")), true, this);
-	RV_TraceParams.bTraceComplex = true;
-	RV_TraceParams.bTraceAsyncScene = true;
-	RV_TraceParams.bReturnPhysicalMaterial = false;
-
-	//Re-initialize hit info
-	FHitResult RV_Hit(ForceInit);
-
-	FVector Start = FirstPersonCameraComponent->GetComponentTransform().GetLocation();
-	FVector End = Start + FirstPersonCameraComponent->GetComponentTransform().GetRotation(
-	
-
-	//call GetWorld() from within an actor extending class
-	/*GetWorld()->LineTraceSingle(
-		RV_Hit,        //result	
-		Start,    //start
-		End, //end
-		ECC_Pawn, //collision channel
-		RV_TraceParams
-		);
-
-	//if (RV_Hit.bBlockingHit)
-	{
-		AActor* Target = RV_Hit.GetActor(); //the hit actor if there is one
-		return Target;
-	}
-
-	return NULL;
-	//RV_Hit.ImpactPoint;  //FVector
-	//RV_Hit.ImpactNormal;  //FVector
-}*/
 
 void AMagicCoopCharacter::MoveForward(float Value)
 {

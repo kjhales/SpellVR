@@ -5,24 +5,12 @@
 #include "GameFramework/Pawn.h"
 #include "BossBase.generated.h"
 
-USTRUCT()
-struct FBossData
-{
-	GENERATED_USTRUCT_BODY()
-
-	UPROPERTY(VisibleDefaultsOnly, Category = Stats)
-		float health;
-};
 
 UCLASS(abstract)
 class MAGIC_API ABossBase : public ACharacter
 {
-	GENERATED_BODY()
+	GENERATED_BODY()	
 
-	UPROPERTY()
-	struct FBossData BossData;
-
-	
 public:
 	// Sets default values for this pawn's properties
 	ABossBase(const FObjectInitializer& ObjectInitializer);
@@ -32,5 +20,14 @@ public:
 	
 	// Called every frame
 	virtual void Tick( float DeltaSeconds ) override;
-public:
+protected:
+	UPROPERTY(EditAnywhere, Replicated, Category=BossStats)
+	float Health;
+
+	/** On Take Damage**/
+	virtual float TakeDamage(
+		float Damage, 
+		const FDamageEvent& DamageEvent, 
+		class AController* EventInstigator, 
+		class AActor* DamageCauser ) override;
 };

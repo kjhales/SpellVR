@@ -65,9 +65,8 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	
 	/** Cast the Current Spell in the System **/
-	void Cast(
-		class AActor* InCaster,					/** Actor who cast the spell* */
-		class USkeletalMeshComponent* CasterMesh, /** Mesh of actor that cast the spell **/
+	void CastSpell(
+		USkeletalMeshComponent* CasterMesh, /** Mesh of actor that cast the spell **/
 		FRotator CastRotation,			
 		FVector CastPositionOffset,			/** Offset of the Spell from the Owner**/
 		class AActor* SpellTarget,				/** Target to adjust aim for, Can be NULL for no target**/
@@ -86,8 +85,10 @@ public:
 	void SelectPrevious();
 	/** Set Release spell of current spell to true Spell in spell system **/
 	void ReleaseSpell();
-private:
-	void InitSpellCast(FVector CastPositionOffset, FVector& Location, FSpellStruct& SpellStruct);
+	/** Sets the owner of spell system**/
+	void SetOwningPawn(AActor* NewOwner);
+protected:
+	virtual FVector GetAdjustedAim() const;
 public:
 	/** Get the Current Selected Spell**/
 	FORCEINLINE FSpellStruct GetCurrentSpell() const { return AvailableSpells[CurrentSpell]; }
